@@ -1,0 +1,6 @@
+这是一张监控图片。现有人工标注为："{human_label}"
+
+请判断此标注是否正确。可选类别：{categories}
+
+只输出 JSON，不要其他文字：
+{{"correct": true或false, "suggested_label": "你认为正确的类别", "reason": "简要理由"}}

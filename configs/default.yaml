@@ -1,0 +1,80 @@
+# ========================================
+# SmartLabel 默认配置
+# ========================================
+
+# ---------- 引擎配置 ----------
+engine:
+  type: "vlm"                      # "vlm" | "pytorch" | "onnx" | "tensorrt"
+
+  vlm:
+    model_path: "/data/models/Qwen2-VL-7B-Instruct-AWQ"
+    quantization: "awq"
+    device: "cuda:0"
+    torch_dtype: "float16"
+    max_new_tokens: 256
+    multi_sample: false             # 多次采样（开启后精度↑速度↓）
+    sample_count: 3
+    temperature: 0.7
+
+  custom:
+    model_path: ""
+    model_format: "onnx"
+    model_type: "classifier"        # "classifier" | "detector" | "both"
+    class_names: []
+    input_size: [640, 640]
+    confidence_threshold: 0.5
+    preprocess:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+      channel_order: "RGB"
+      resize_mode: "letterbox"
+
+# ---------- 任务配置 ----------
+task:
+  classification:
+    categories: []
+    output_format: "both"           # "folder" | "csv" | "both"
+    file_operation: "copy"          # "copy" | "symlink"
+
+  detection:
+    targets: []
+    output_format: "voc_xml"
+
+  video:
+    categories: []
+    window_sec: 5.0
+    stride_sec: 2.5
+    sample_fps: 1.0
+    strategy: "temporal_smooth"     # "vote" | "temporal_smooth" | "vlm_multiframe"
+    smooth_window: 3
+    min_segment_sec: 2.0
+    output_format: "both"           # "csv" | "json" | "both"
+
+# ---------- 质检配置 ----------
+quality_check:
+  iou_threshold: 0.5
+  sample_mode: "all"
+  sample_ratio: 1.0
+  escalation_enabled: true          # 低置信度升级到 VLM
+  escalation_threshold: 0.8         # 置信度低于此值 → VLM 复核
+
+# ---------- 运行配置 ----------
+runtime:
+  num_io_workers: 4                 # IO 线程数（非 GPU 线程）
+  ui_update_interval: 10            # GUI 每 N 张更新一次
+  log_level: "INFO"
+  temp_dir: "/tmp/smartlabel"
+
+# ---------- 输出配置 ----------
+output:
+  report_format: "both"
+  save_visualization: true
+  export_error_cases: true          # 导出错误 case 文件夹
+
+# ---------- Prompt ----------
+prompts:
+  dir: "configs/prompts"
+  classification: "classify_json.txt"
+  qc: "qc_json.txt"
+  video: "video_clip.txt"
+  detection: "detect_grounding.txt"

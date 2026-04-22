@@ -1,0 +1,41 @@
+# ---- GUI ----
+PyQt5>=5.15.9
+
+# ---- Web ----
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
+
+# ---- CLI ----
+typer>=0.9.0
+rich>=13.0.0
+
+# ---- VLM ----
+torch>=2.1.0
+torchvision>=0.16.0
+transformers>=4.40.0
+accelerate>=0.28.0
+autoawq>=0.2.0
+qwen-vl-utils>=0.0.2
+
+# ---- 自有模型 ----
+onnxruntime-gpu>=1.16.0       # 可选
+# tensorrt                    # 可选，按环境安装
+
+# ---- 数据处理 ----
+Pillow>=10.0.0
+opencv-python>=4.8.0
+lxml>=4.9.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# ---- 可视化与报告 ----
+matplotlib>=3.7.0
+jinja2>=3.1.0
+
+# ---- 评估 ----
+scikit-learn>=1.3.0
+
+# ---- 工具 ----
+pyyaml>=6.0
+tqdm>=4.65.0
