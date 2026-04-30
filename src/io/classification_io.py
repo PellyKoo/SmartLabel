@@ -53,8 +53,23 @@ def _save_as_folders(results: list[ClassificationResult], output_dir: str,
         else:
             shutil.copy2(result.image_path, dst)
 
+    # 用 submit + as_completed 收集每个文件的结果
+    # executor.map 是惰性的，不迭代不会触发异常 → 文件复制失败会被静默吞掉
+    failures = []
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        executor.map(_process_one, results)
+        futures = {executor.submit(_process_one, r): r for r in results}
+        for fut in futures:
+            try:
+                fut.result()
+            except Exception as e:
+                r = futures[fut]
+                failures.append((r.image_path, str(e)))
+                logger.warning(f"文件操作失败: {r.image_path} -> {e}")
+
+    if failures:
+        logger.error(f"共 {len(failures)} 个文件保存失败（前 5 个）:")
+        for path, err in failures[:5]:
+            logger.error(f"  {path}: {err}")
 
 
 def _save_as_csv(results: list[ClassificationResult], output_dir: str):
@@ -101,6 +116,107 @@ def read_classification_folders(annotation_dir: str) -> dict[str, str]:
 
     logger.info(f"读取分类标注: {len(annotations)} 条，来自 {annotation_dir}")
     return annotations
+
+
+def relabel_classification(class_root_dir: str, filename: str,
+                            old_label: str, new_label: str,
+                            csv_path: Optional[str] = None) -> str:
+    """
+    把已分类的文件从 old_label 子目录移到 new_label 子目录。
+
+    同时处理三种情况：
+    - 常规文件：rename 移动
+    - 软链接：删除旧链接，在新目录创建指向同一目标的新链接
+    - 目标已存在：抛 FileExistsError（由调用方决定如何提示）
+
+    若提供 csv_path，同步更新该文件对应记录的 predicted_class 列。
+
+    Args:
+        class_root_dir: 类别根目录（下面是 old_label/ new_label/ 等子目录）
+        filename: 文件名（不带目录）
+        old_label: 原类别
+        new_label: 新类别
+        csv_path: 可选，分类 CSV 路径；存在时同步更新
+
+    Returns:
+        新位置的绝对路径
+    """
+    if old_label == new_label:
+        raise ValueError("新旧标签相同，无需移动")
+
+    old_path = os.path.join(class_root_dir, old_label, filename)
+    new_dir = os.path.join(class_root_dir, new_label)
+    new_path = os.path.join(new_dir, filename)
+
+    if not os.path.lexists(old_path):
+        raise FileNotFoundError(f"源文件不存在: {old_path}")
+    if os.path.lexists(new_path):
+        raise FileExistsError(f"目标已存在: {new_path}")
+
+    os.makedirs(new_dir, exist_ok=True)
+
+    # symlink 处理：删旧链接 + 新目录重建，指向同一真实目标
+    if os.path.islink(old_path):
+        target = os.readlink(old_path)
+        # 若原链接是相对路径，转成绝对路径避免新位置断链
+        if not os.path.isabs(target):
+            target = os.path.abspath(
+                os.path.join(os.path.dirname(old_path), target)
+            )
+        os.unlink(old_path)
+        os.symlink(target, new_path)
+    else:
+        # 常规文件：shutil.move 能跨卷（os.rename 跨卷会抛 OSError）
+        shutil.move(old_path, new_path)
+
+    # 同步 CSV
+    if csv_path and os.path.isfile(csv_path):
+        _update_csv_label(csv_path, filename, new_label)
+
+    logger.info(f"重标注: {old_label} -> {new_label}, {filename}")
+    return new_path
+
+
+def _update_csv_label(csv_path: str, filename: str, new_label: str) -> int:
+    """
+    更新分类 CSV 中匹配 filename（basename）行的 predicted_class / label 列。
+
+    Returns: 更新的行数
+    """
+    # 读全部
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+    if not rows:
+        return 0
+
+    header = rows[0]
+    # 找列位置：优先匹配 predicted_class / label
+    try:
+        path_idx = next(i for i, h in enumerate(header)
+                        if h.lower() in ("image_path", "path", "filename"))
+    except StopIteration:
+        path_idx = 0
+    try:
+        label_idx = next(i for i, h in enumerate(header)
+                          if h.lower() in ("predicted_class", "label", "class"))
+    except StopIteration:
+        label_idx = 1
+
+    updated = 0
+    for row in rows[1:]:
+        if len(row) <= max(path_idx, label_idx):
+            continue
+        if os.path.basename(row[path_idx]) == filename:
+            row[label_idx] = new_label
+            updated += 1
+
+    # 写回
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerows(rows)
+
+    return updated
 
 
 def read_classification_csv(csv_path: str) -> dict[str, str]:

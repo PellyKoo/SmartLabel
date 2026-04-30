@@ -19,7 +19,11 @@ class VLMEngine(BaseEngine):
         """
         config:
             model_path: str                 # 模型路径
-            quantization: "awq" | "gptq" | "none"
+            quantization: "awq" | "gptq" | "bnb4" | "bnb8" | "none"
+                - awq/gptq: 加载已量化权重（transformers 自动识别）
+                - bnb4: 运行时 4-bit NF4 量化（bitsandbytes，Windows 兼容）
+                - bnb8: 运行时 8-bit 量化（bitsandbytes）
+                - none: fp16/bf16 原始权重
             device: "cuda:0"
             torch_dtype: "float16" | "bfloat16"
             max_new_tokens: 256
@@ -63,32 +67,81 @@ class VLMEngine(BaseEngine):
         from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
         model_path = self._config["model_path"]
-        device = self._config.get("device", "cuda:0")
+
+        # ---------- 设备自动解析 ----------
+        device = self._config.get("device", "auto")
+        cuda_available = torch.cuda.is_available()
+        if device == "auto":
+            device = "cuda:0" if cuda_available else "cpu"
+            logger.info(f"device=auto 解析为: {device} "
+                        f"(CUDA {'可用' if cuda_available else '不可用'})")
+        is_cpu = device == "cpu" or not cuda_available
+
+        # 把解析后的 device 写回 config，供后续推理 _infer_messages.to(device) 使用
+        self._config["device"] = device
+
+        # ---------- dtype 解析 + CPU 降级 ----------
         dtype_str = self._config.get("torch_dtype", "float16")
         dtype = torch.bfloat16 if dtype_str == "bfloat16" else torch.float16
 
-        # 2080Ti 不支持 bfloat16，强制使用 float16
-        if dtype == torch.bfloat16 and torch.cuda.is_available():
+        if is_cpu:
+            # CPU 上 fp16 推理慢且数值不稳，强制 fp32
+            if dtype != torch.float32:
+                logger.warning(f"CPU 模式下 {dtype} 不稳定，自动切换为 float32")
+                dtype = torch.float32
+            # 7B 模型在 CPU 上几乎无法跑（OOM 或极慢）
+            if any(tag in model_path for tag in ("7B", "7b", "13B", "13b", "32B", "32b")):
+                logger.warning(
+                    "⚠️ CPU 模式下检测到大模型（7B+），推理会非常慢且可能 OOM。"
+                    "强烈建议切换到 2B 模型。"
+                )
+        elif dtype == torch.bfloat16:
+            # 2080Ti / V100 / T4 等 sm < 80 的卡不支持 bfloat16
             gpu_name = torch.cuda.get_device_name(0)
-            if "2080" in gpu_name:
+            if "2080" in gpu_name or "1080" in gpu_name or "Tesla T4" in gpu_name:
                 logger.warning(f"检测到 {gpu_name}，不支持 bfloat16，强制使用 float16")
                 dtype = torch.float16
 
+        # ---------- 量化解析 + CPU 降级 ----------
         quantization = self._config.get("quantization", "none")
-        logger.info(f"加载 VLM 模型: {model_path} (量化={quantization}, dtype={dtype})")
+        if is_cpu and quantization in ("bnb4", "bnb8", "awq", "gptq"):
+            logger.warning(
+                f"CPU 模式不支持 {quantization} 量化（需要 CUDA），"
+                f"自动切换为 none（fp32）"
+            )
+            quantization = "none"
+            self._config["quantization"] = "none"
 
-        load_kwargs = {
-            "torch_dtype": dtype,
-            "device_map": device,
-        }
+        logger.info(f"加载 VLM 模型: {model_path} "
+                    f"(device={device}, 量化={quantization}, dtype={dtype})")
 
-        # AWQ/GPTQ 模型无需额外配置，transformers 自动识别
+        load_kwargs = {"torch_dtype": dtype}
+
+        # bnb4 / bnb8：运行时量化（仅 CUDA 可用，绕开 autoawq）
+        if quantization in ("bnb4", "bnb8"):
+            from transformers import BitsAndBytesConfig
+            if quantization == "bnb4":
+                bnb_cfg = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=dtype,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+            else:
+                bnb_cfg = BitsAndBytesConfig(load_in_8bit=True)
+            load_kwargs["quantization_config"] = bnb_cfg
+            load_kwargs["device_map"] = "auto"   # bnb 要求
+        else:
+            # awq/gptq/none：transformers 自动识别 AWQ/GPTQ 元数据
+            # CPU 下 device_map="cpu"，GPU 下用具体 device
+            load_kwargs["device_map"] = "cpu" if is_cpu else device
+
         self._model = Qwen2VLForConditionalGeneration.from_pretrained(
             model_path, **load_kwargs
         )
         self._processor = AutoProcessor.from_pretrained(model_path)
 
-        logger.info(f"VLM 模型加载完成，设备: {device}")
+        logger.info(f"VLM 模型加载完成，设备: {device}, 量化: {quantization}")
 
     def unload(self):
         """释放显存"""
@@ -110,12 +163,17 @@ class VLMEngine(BaseEngine):
             "device": self._config.get("device", "cuda:0"),
             "is_loaded": self.is_loaded,
         }
-        if self.is_loaded and torch.cuda.is_available():
-            device_idx = int(self._config.get("device", "cuda:0").split(":")[-1])
-            allocated = torch.cuda.memory_allocated(device_idx) / 1024**3
-            total = torch.cuda.get_device_properties(device_idx).total_mem / 1024**3
-            info["gpu_memory_allocated_gb"] = round(allocated, 2)
-            info["gpu_memory_total_gb"] = round(total, 2)
+        device = self._config.get("device", "cuda:0")
+        if self.is_loaded and torch.cuda.is_available() and device.startswith("cuda"):
+            try:
+                device_idx = int(device.split(":")[-1])
+                allocated = torch.cuda.memory_allocated(device_idx) / 1024**3
+                total = torch.cuda.get_device_properties(device_idx).total_memory / 1024**3
+                info["gpu_memory_allocated_gb"] = round(allocated, 2)
+                info["gpu_memory_total_gb"] = round(total, 2)
+                info["gpu_name"] = torch.cuda.get_device_name(device_idx)
+            except Exception as e:
+                logger.warning(f"获取显存信息失败: {e}")
         return info
 
     # ==================== 分类 ====================
@@ -150,6 +208,13 @@ class VLMEngine(BaseEngine):
         """
         n = self._config.get("sample_count", 3)
         temp = self._config.get("temperature", 0.7)
+        # temperature<=0 时 _infer 会走贪心解码，N 次结果完全相同，多次采样毫无意义
+        if temp <= 0:
+            logger.warning(
+                f"multi_sample=True 但 temperature={temp} 会退化为贪心解码，"
+                f"N 次结果将完全相同。已自动调整为 0.7。"
+            )
+            temp = 0.7
         prompt = self._prompt_manager.render("classify_json", categories=categories)
 
         results = []

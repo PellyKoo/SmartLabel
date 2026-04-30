@@ -1,0 +1,46 @@
+# DMS 质检 Profile
+# 场景：外包标注完成，用自有 ONNX 模型初筛 + VLM 对低置信度样本深度复核
+# 用法：python scripts/run_cli.py qualitycheck --config configs/profiles/dms_qualitycheck.yaml \
+#              --image-dir /data/dms/images \
+#              --annotation-dir /data/dms/annotations \
+#              --output-dir /data/dms/qc_report \
+#              --vlm-config configs/profiles/dms_preannotate.yaml  # 可选双引擎
+
+engine:
+  type: vlm                     # 若有自有模型改为 onnx/pytorch
+  vlm:
+    model_path: models/Qwen2-VL-7B-Instruct
+    quantization: bnb4
+    device: cuda:0
+    torch_dtype: float16
+    max_new_tokens: 128
+    multi_sample: false         # 质检单次推理足够，速度优先
+
+task:
+  classification:
+    categories:
+      - normal
+      - fatigue
+      - distracted
+      - phone
+      - smoke
+
+quality_check:
+  iou_threshold: 0.5
+  escalation_enabled: true      # 低置信度升级到 VLM 复核（需同时传 --vlm-config）
+  escalation_threshold: 0.80    # 低于此置信度 → VLM 深度复核
+
+runtime:
+  num_io_workers: 4
+  ui_update_interval: 10
+  log_level: INFO
+  temp_dir: ./tmp/smartlabel
+
+output:
+  report_format: both           # HTML + CSV 双报告
+  save_visualization: false
+  export_error_cases: true      # 导出错误 case 供分析标注规范问题
+
+prompts:
+  dir: configs/prompts
+  qc: qc_json.txt

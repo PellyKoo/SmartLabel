@@ -7,9 +7,14 @@ engine:
   type: "vlm"                      # "vlm" | "pytorch" | "onnx" | "tensorrt"
 
   vlm:
-    model_path: "/data/models/Qwen2-VL-7B-Instruct-AWQ"
-    quantization: "awq"
-    device: "cuda:0"
+    model_path: "models/Qwen2-VL-2B-Instruct"
+    # quantization:
+    #   awq / gptq : 加载预量化权重（需 autoawq ≥ 0.2.5，Linux 推荐）
+    #   bnb4       : 运行时 NF4 4-bit 量化（bitsandbytes，Windows 友好）
+    #   bnb8       : 运行时 8-bit 量化（bitsandbytes）
+    #   none       : 加载 fp16/bf16 原始权重
+    quantization: "none"
+    device: "auto"            # auto: 有 CUDA 用 cuda:0，否则 cpu；也可显式写 cuda:0 / cpu
     torch_dtype: "float16"
     max_new_tokens: 256
     multi_sample: false             # 多次采样（开启后精度↑速度↓）

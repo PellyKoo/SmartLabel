@@ -1,0 +1,38 @@
+# 新项目 VLM 预标注 Profile
+# 场景：项目初期无自有模型，纯 VLM 通用能力做从零开始的预标注
+# 特点：多次采样 + 高温度，保证多样性，不确定的标记出来人工处理
+# 用法：python scripts/run_cli.py preannotate --config configs/profiles/new_project_vlm.yaml \
+#              --image-dir /data/new_project/images --output-dir /data/new_project/pre_annotations
+
+engine:
+  type: vlm
+  vlm:
+    model_path: models/Qwen2-VL-7B-Instruct
+    quantization: bnb4
+    device: cuda:0
+    torch_dtype: float16
+    max_new_tokens: 128
+    multi_sample: true          # 多次采样，不确定样本 is_uncertain=True
+    sample_count: 5             # 次数更多，置信度更可靠
+    temperature: 0.7
+
+task:
+  classification:
+    categories: []              # 运行时通过 --categories 参数传入
+    output_format: both
+    file_operation: copy
+
+runtime:
+  num_io_workers: 4
+  ui_update_interval: 5        # 更频繁的进度更新
+  log_level: INFO
+  temp_dir: ./tmp/smartlabel
+
+output:
+  report_format: html           # 只要 HTML 报告方便查看
+  save_visualization: false
+  export_error_cases: false
+
+prompts:
+  dir: configs/prompts
+  classification: classify_json.txt

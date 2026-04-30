@@ -1,0 +1,42 @@
+# DMS 预标注 Profile
+# 场景：有大量未标注的驾驶员监控图片，用 VLM 做初步分类预标注
+# 用法：python scripts/run_cli.py preannotate --config configs/profiles/dms_preannotate.yaml \
+#              --image-dir /data/dms/images --output-dir /data/dms/pre_annotations
+
+engine:
+  type: vlm
+  vlm:
+    model_path: models/Qwen2-VL-7B-Instruct
+    quantization: bnb4          # Windows 推荐；Linux 换 awq
+    device: cuda:0
+    torch_dtype: float16
+    max_new_tokens: 128
+    multi_sample: true          # 开启多次采样提升精度
+    sample_count: 3
+    temperature: 0.6
+
+task:
+  classification:
+    categories:
+      - normal
+      - fatigue
+      - distracted
+      - phone
+      - smoke
+    output_format: both         # folder + CSV 双输出
+    file_operation: copy
+
+runtime:
+  num_io_workers: 4
+  ui_update_interval: 10
+  log_level: INFO
+  temp_dir: ./tmp/smartlabel
+
+output:
+  report_format: both
+  save_visualization: false
+  export_error_cases: false
+
+prompts:
+  dir: configs/prompts
+  classification: classify_json.txt

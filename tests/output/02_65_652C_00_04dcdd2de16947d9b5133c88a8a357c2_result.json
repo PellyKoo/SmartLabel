@@ -1,0 +1,14 @@
+{
+  "video_path": "G:\\competition\\SmartLabel\\tests\\data\\02_65_652C_00_04dcdd2de16947d9b5133c88a8a357c2.mp4",
+  "clips": [
+    {
+      "start_sec": 0.0,
+      "end_sec": 7.5,
+      "label": "normal",
+      "duration_sec": 7.5
+    }
+  ],
+  "statistics": {
+    "normal": 7.5
+  }
+}

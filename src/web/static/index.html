@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartLabel — AI 辅助标注与质检平台</title>
+  <link rel="icon" href="data:,"><!-- 抑制 favicon.ico 404 -->
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <style>
+  /* ---- 文件浏览器 Modal ---- */
+  #fb-modal {
+    display: none;
+    position: fixed; inset: 0;
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+  }
+  #fb-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,.6);
+  }
+  #fb-dialog {
+    position: relative;
+    background: #252526;
+    border: 1px solid #3C3C3C;
+    border-radius: 6px;
+    width: min(680px, 95vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  }
+  #fb-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid #3C3C3C;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  #fb-close {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+    min-width: unset;
+  }
+  #fb-close:hover { color: #EF5350; background: none; }
+  #fb-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-bottom: 1px solid #3C3C3C;
+    background: #2D2D30;
+    font-size: 12px;
+  }
+  #fb-toolbar button {
+    padding: 4px 10px;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  #fb-path-display {
+    color: #888;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  #fb-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    min-height: 260px;
+    max-height: 380px;
+  }
+  .fb-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    user-select: none;
+  }
+  .fb-row:hover   { background: rgba(255,255,255,.05); }
+  .fb-row.selected { background: #094771; }
+  .fb-row.fb-file { color: #CCC; }
+  .fb-icon { font-size: 15px; }
+  .fb-name { flex: 1; }
+  .fb-error, .fb-empty { color: #888; padding: 16px; text-align: center; font-size: 12px; }
+  #fb-footer {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid #3C3C3C;
+    background: #2D2D30;
+  }
+  #fb-manual {
+    flex: 1;
+    background: #3C3C3C;
+    color: #D4D4D4;
+    border: 1px solid #505050;
+    border-radius: 3px;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+  </style>
+</head>
+<body>
+
+<!-- ===== 顶部导航 ===== -->
+<header>
+  <h1>SmartLabel</h1>
+  <span class="nav-tab active" data-tab="preannotate">预标注</span>
+  <span class="nav-tab" data-tab="qualitycheck">质检</span>
+  <span class="nav-tab" data-tab="video">视频分类</span>
+  <span class="nav-tab" data-tab="history">任务历史</span>
+</header>
+
+<!-- ===== 主体 ===== -->
+<main>
+
+  <!-- ===== 左侧引擎面板 ===== -->
+  <aside id="engine-panel">
+
+    <div class="card">
+      <h3>引擎配置</h3>
+      <div class="form-row">
+        <label>类型</label>
+        <select id="engine-type">
+          <option value="vlm">VLM（Qwen2-VL）</option>
+          <option value="onnx">自有模型 ONNX</option>
+          <option value="pytorch">自有模型 PyTorch</option>
+          <option value="tensorrt">自有模型 TensorRT</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>模型路径</label>
+        <div class="path-row">
+          <input type="text" id="model-path" placeholder="/data/models/Qwen2-VL-7B">
+          <button type="button" class="fb-btn" title="浏览目录"
+            onclick="FileBrowser.pickDir(p=>document.getElementById('model-path').value=p)">📂</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>量化</label>
+        <select id="quantization">
+          <option value="bnb4">bnb4（Windows 推荐）</option>
+          <option value="none">none（fp16）</option>
+          <option value="awq">awq（Linux）</option>
+          <option value="bnb8">bnb8</option>
+        </select>
+      </div>
+      <!-- 引擎 ID（只读，自动生成）-->
+      <div class="form-row" id="engine-key-row" style="display:none">
+        <label>引擎 ID</label>
+        <span id="engine-key-display"
+              style="font-family:monospace;font-size:11px;color:#888;
+                     background:#2D2D30;padding:3px 8px;border-radius:3px;
+                     display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        </span>
+      </div>
+      <div class="flex-row mt8">
+        <button class="primary" id="engine-load-btn" onclick="loadEngine()">加载引擎</button>
+        <span id="engine-load-status" style="font-size:12px;margin-left:4px"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>已加载引擎</h3>
+      <div id="engine-status-list">
+        <span class="text-dim text-sm">无已加载引擎</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>帮助</h3>
+      <div class="text-dim text-sm">
+        <p>• 输入引擎 Key 和模型路径，点击「加载引擎」</p>
+        <p style="margin-top:4px">• 各页面填写路径后提交任务</p>
+        <p style="margin-top:4px">• GPU 任务串行，多任务自动排队</p>
+        <p style="margin-top:4px">• <a href="/docs" target="_blank" style="color:#4CAF50">API 文档 (Swagger)</a></p>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ===== 内容区 ===== -->
+  <div id="content">
+
+    <!-- ========== 预标注 Tab ========== -->
+    <section id="page-preannotate" class="tab-page active">
+
+      <div class="card">
+        <h3>预标注配置</h3>
+        <div class="form-row">
+          <label>任务类型</label>
+          <select id="pa-task">
+            <option value="classification">分类</option>
+            <option value="detection">检测</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>图片目录（服务器路径）</label>
+          <div class="path-row">
+            <input type="text" id="pa-image-dir" placeholder="/data/images">
+            <button type="button" class="fb-btn" title="浏览目录"
+              onclick="FileBrowser.pickDir(p=>document.getElementById('pa-image-dir').value=p)">📂</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>输出目录</label>
+          <div class="path-row">
+            <input type="text" id="pa-output-dir" placeholder="/data/output/preannotate">
+            <button type="button" class="fb-btn" title="浏览目录"
+              onclick="FileBrowser.pickDir(p=>document.getElementById('pa-output-dir').value=p)">📂</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>类别 / 目标（逗号分隔，或从 txt 加载）</label>
+          <div class="path-row">
+            <input type="text" id="pa-categories" placeholder="normal,fatigue,distracted">
+            <button type="button" class="fb-btn" title="从 txt 文件加载类别（每行一个）"
+              onclick="FileBrowser.pickFile(p=>API.fsRead(p).then(r=>{document.getElementById('pa-categories').value=r.content.split('\n').map(s=>s.trim()).filter(s=>s&&!s.startsWith('#')).join(',')}))">📄</button>
+          </div>
+        </div>
+        <div class="flex-row mt8">
+          <button class="primary" id="pa-start-btn" onclick="startPreannotate()">▶ 开始预标注</button>
+          <button id="pa-stop-btn" onclick="stopPreannotate()" disabled>⏹ 停止</button>
+          <span id="pa-status" class="text-sm"></span>
+        </div>
+        <div class="progress-wrap mt8" id="pa-progress"><div class="progress-bar"></div></div>
+      </div>
+
+      <div class="card" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+        <h3>结果预览（前 200 条）</h3>
+        <div style="overflow:auto;flex:1">
+          <table id="pa-result-table">
+            <tr><th>文件</th><th>预测类别</th><th>置信度</th><th>状态</th></tr>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ========== 质检 Tab ========== -->
+    <section id="page-qualitycheck" class="tab-page">
+
+      <div class="card">
+        <h3>质检配置</h3>
+        <div class="form-row">
+          <label>图片目录</label>
+          <div class="path-row">
+            <input type="text" id="qc-image-dir" placeholder="/data/images">
+            <button type="button" class="fb-btn" title="浏览目录"
+              onclick="FileBrowser.pickDir(p=>document.getElementById('qc-image-dir').value=p)">📂</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>标注目录（文件夹结构或 CSV）</label>
+          <div class="path-row">
+            <input type="text" id="qc-annotation-dir" placeholder="/data/annotations">
+            <button type="button" class="fb-btn" title="浏览目录"
+              onclick="FileBrowser.pickDir(p=>document.getElementById('qc-annotation-dir').value=p)">📂</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>输出目录</label>
+          <div class="path-row">
+            <input type="text" id="qc-output-dir" placeholder="/data/output/qc">
+            <button type="button" class="fb-btn" title="浏览目录"
+              onclick="FileBrowser.pickDir(p=>document.getElementById('qc-output-dir').value=p)">📂</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>类别（逗号分隔，或从 txt 加载）</label>
+          <div class="path-row">
+            <input type="text" id="qc-categories" placeholder="normal,fatigue,distracted">
+            <button type="button" class="fb-btn" title="从 txt 文件加载类别"
+              onclick="FileBrowser.pickFile(p=>API.fsRead(p).then(r=>{document.getElementById('qc-categories').value=r.content.split('\n').map(s=>s.trim()).filter(s=>s&&!s.startsWith('#')).join(',')}))">📄</button>
+          </div>
+        </div>
+        <div class="flex-row mt8">
+          <button class="primary" id="qc-start-btn" onclick="startQC()">▶ 开始质检</button>
+          <button id="qc-stop-btn" onclick="stopQC()" disabled>⏹ 停止</button>
+          <span id="qc-status" class="text-sm"></span>
+        </div>
+        <div class="progress-wrap mt8" id="qc-progress"><div class="progress-bar"></div></div>
+      </div>
+
+      <div class="card">
+        <h3>质检摘要</h3>
+        <div id="qc-summary" class="text-sm text-dim">尚未运行</div>
+      </div>
+
+      <div class="card" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+        <h3>待复核样本（前 100 条）</h3>
+        <div style="overflow:auto;flex:1">
+          <table id="qc-review-table">
+            <tr><th>图片</th><th>人工</th><th>引擎</th><th>置信度</th><th>VLM 理由</th></tr>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ========== 视频 Tab ========== -->
+    <section id="page-video" class="tab-page">
+
+      <div class="card">
+        <h3>视频分类配置</h3>
+        <div class="form-row">
+          <label>视频目录或文件（服务器路径）</label>
+          <div class="path-row">
+            <input type="text" id="video-dir" placeholder="/data/videos">
+            <button type="button" class="fb-btn" title="浏览目录"
+              onclick="FileBrowser.pickDir(p=>document.getElementById('video-dir').value=p)">📂</button>
+            <button type="button" class="fb-btn" title="选择单个视频文件"
+              onclick="FileBrowser.pickFile(p=>document.getElementById('video-dir').value=p)">🎬</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>输出目录</label>
+          <div class="path-row">
+            <input type="text" id="video-output-dir" placeholder="/data/output/video">
+            <button type="button" class="fb-btn" title="浏览目录"
+              onclick="FileBrowser.pickDir(p=>document.getElementById('video-output-dir').value=p)">📂</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>类别（逗号分隔，或从 txt 加载）</label>
+          <div class="path-row">
+            <input type="text" id="video-categories" placeholder="normal,fatigue,distracted">
+            <button type="button" class="fb-btn" title="从 txt 文件加载类别"
+              onclick="FileBrowser.pickFile(p=>API.fsRead(p).then(r=>{document.getElementById('video-categories').value=r.content.split('\n').map(s=>s.trim()).filter(s=>s&&!s.startsWith('#')).join(',')}))">📄</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>策略</label>
+          <select id="video-strategy">
+            <option value="temporal_smooth">temporal_smooth（推荐）</option>
+            <option value="vote">vote</option>
+            <option value="vlm_multiframe">vlm_multiframe</option>
+          </select>
+        </div>
+        <div class="flex-row mt8">
+          <button class="primary" id="video-start-btn" onclick="startVideo()">▶ 开始分类</button>
+          <button id="video-stop-btn" onclick="stopVideo()" disabled>⏹ 停止</button>
+          <span id="video-status" class="text-sm"></span>
+        </div>
+        <div class="progress-wrap mt8" id="video-progress"><div class="progress-bar"></div></div>
+      </div>
+
+      <div id="video-result" style="display:flex;flex-direction:column;gap:12px;flex:1;overflow-y:auto"></div>
+
+    </section>
+
+    <!-- ========== 任务历史 Tab ========== -->
+    <section id="page-history" class="tab-page">
+
+      <div class="card" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+        <h3>任务历史</h3>
+        <div style="overflow:auto;flex:1">
+          <table id="history-table">
+            <thead><tr><th>ID</th><th>类型</th><th>状态</th><th>进度</th><th>时间</th><th>操作</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </div><!-- #content -->
+</main>
+
+<!-- 底部日志 -->
+<pre id="log-area"></pre>
+
+<!-- 状态栏 -->
+<footer id="status-bar">就绪</footer>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/filebrowser.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
