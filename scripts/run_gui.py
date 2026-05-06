@@ -11,6 +11,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# PyInstaller 打包后资源根目录
+_BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
+
 # Windows 下强制 UTF-8
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -27,14 +30,20 @@ QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
 QCoreApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
 from PyQt5.QtWidgets import QApplication  # noqa: E402
+from PyQt5.QtGui import QIcon  # noqa: E402
 
 from src.gui import MainWindow  # noqa: E402
+
+ICON_PATH = _BUNDLE_DIR / "src" / "icon" / "smartlabel_icon.ico"
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("SmartLabel")
     app.setOrganizationName("SmartLabel")
+
+    if ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(ICON_PATH)))
 
     window = MainWindow()
     window.show()

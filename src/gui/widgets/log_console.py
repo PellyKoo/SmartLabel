@@ -17,12 +17,26 @@ from PyQt5.QtWidgets import (
     QPushButton, QCheckBox, QLabel,
 )
 
-_LEVEL_COLORS = {
+_LEVEL_COLORS_DARK = {
     "DEBUG": "#888888",
     "INFO": "#DDDDDD",
     "WARNING": "#FFA726",
     "ERROR": "#EF5350",
     "CRITICAL": "#EF5350",
+}
+
+_LEVEL_COLORS_LIGHT = {
+    "DEBUG": "#666666",
+    "INFO": "#002FA7",
+    "WARNING": "#C45000",
+    "ERROR": "#C62828",
+    "CRITICAL": "#C62828",
+}
+
+# 时间戳和消息正文颜色
+_TEXT_COLORS = {
+    "dark":  {"time": "#777777", "message": "#DDDDDD"},
+    "light": {"time": "#666666", "message": "#1A1A1A"},
 }
 
 
@@ -56,6 +70,8 @@ class LogConsole(QWidget):
         self._signal = _QtLogSignal()
         self._handler = _QtLogHandler(self._signal)
         self._handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+        self._level_colors = _LEVEL_COLORS_DARK
+        self._text_colors = _TEXT_COLORS["dark"]
 
         self._build_ui()
         self._signal.log_arrived.connect(self._on_log)
@@ -113,13 +129,22 @@ class LogConsole(QWidget):
         time_str = datetime.now().strftime("%H:%M:%S")
         self._on_log(level, time_str, message)
 
+    def set_theme(self, theme: str):
+        """切换日志颜色方案，theme 为 'dark' 或 'light'"""
+        if theme == "light":
+            self._level_colors = _LEVEL_COLORS_LIGHT
+            self._text_colors = _TEXT_COLORS["light"]
+        else:
+            self._level_colors = _LEVEL_COLORS_DARK
+            self._text_colors = _TEXT_COLORS["dark"]
+
     def _on_log(self, level: str, time_str: str, message: str):
-        color = _LEVEL_COLORS.get(level, "#DDDDDD")
+        color = self._level_colors.get(level, self._text_colors["message"])
         cursor = self._text.textCursor()
         cursor.movePosition(QTextCursor.End)
 
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor("#777"))
+        fmt.setForeground(QColor(self._text_colors["time"]))
         cursor.insertText(f"[{time_str}] ", fmt)
 
         fmt = QTextCharFormat()
@@ -127,7 +152,7 @@ class LogConsole(QWidget):
         cursor.insertText(f"{level:<7} ", fmt)
 
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor("#DDDDDD"))
+        fmt.setForeground(QColor(self._text_colors["message"]))
         cursor.insertText(f"{message}\n", fmt)
 
         if self._autoscroll_cb.isChecked():

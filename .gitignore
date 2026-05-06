@@ -1,4 +1,6 @@
-build/
 models/
 __pycache__/
 demo_output/
+build/dist/
+build/build/
+

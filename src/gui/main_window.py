@@ -11,6 +11,7 @@ SmartLabel 主窗口。
     └─────────────────────────────────────────────────────┘
     [状态栏: 引擎状态 / 最新消息]
 """
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -18,7 +19,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
-    QTabWidget, QStatusBar, QAction, QMessageBox,
+    QTabWidget, QStatusBar, QAction, QActionGroup, QMessageBox,
 )
 
 from src.gui.widgets.engine_panel import EnginePanel
@@ -33,7 +34,12 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-QSS_PATH = PROJECT_ROOT / "src" / "gui" / "styles" / "theme.qss"
+_BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
+STYLES_DIR = _BUNDLE_DIR / "src" / "gui" / "styles"
+THEMES = {
+    "浅色（克莱因蓝）": STYLES_DIR / "theme_light.qss",
+    "深色": STYLES_DIR / "theme.qss",
+}
 
 
 class MainWindow(QMainWindow):
@@ -121,6 +127,18 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
+        # 主题菜单
+        theme_menu = menu.addMenu("主题(&T)")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for name in THEMES:
+            action = QAction(name, self, checkable=True)
+            if name == "浅色（克莱因蓝）":
+                action.setChecked(True)
+            action.triggered.connect(lambda checked, n=name: self._apply_theme(n))
+            theme_group.addAction(action)
+            theme_menu.addAction(action)
+
         help_menu = menu.addMenu("帮助(&H)")
         about_action = QAction("关于 SmartLabel", self)
         about_action.triggered.connect(self._show_about)
@@ -134,13 +152,19 @@ class MainWindow(QMainWindow):
             lambda msg: self.statusBar().showMessage(msg, 5000)
         )
 
-    def _apply_theme(self):
-        if QSS_PATH.exists():
+    def _apply_theme(self, name: str = "浅色（克莱因蓝）"):
+        qss_path = THEMES.get(name)
+        if qss_path and qss_path.exists():
             try:
-                with open(QSS_PATH, "r", encoding="utf-8") as f:
+                with open(qss_path, "r", encoding="utf-8") as f:
                     self.setStyleSheet(f.read())
             except OSError as e:
                 logger.warning(f"读取主题文件失败: {e}")
+        self._current_theme = name
+        if self._log_console is not None:
+            self._log_console.set_theme(
+                "light" if "浅色" in name else "dark"
+            )
 
     def _attach_logger(self):
         """启动后把 logger 输出挂到 UI 日志控制台"""
